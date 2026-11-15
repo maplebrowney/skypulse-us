@@ -1,0 +1,42 @@
+{
+  "name": "SkyPulse US SideStore Source",
+  "subtitle": "Live US Flight Tracker & Airspace Telemetry for SideStore / LiveContainer",
+  "description": "Automated SideStore & LiveContainer source feed for SkyPulse US.",
+  "identifier": "com.skypulse.us.source",
+  "website": "https://github.com/maplebrowney/skypulse-us",
+  "tintColor": "#0284C7",
+  "apps": [
+    {
+      "name": "SkyPulse US",
+      "bundleIdentifier": "com.skypulse.us",
+      "developerName": "maplebrowney",
+      "subtitle": "Live US Flights, Airspace Map & Terminal/Gate Boards",
+      "localizedDescription": "Real-time US flight tracking with live ADS-B airspace map, airline insignias, terminal/gate schedules, and SideStore/LiveContainer compatibility.",
+      "iconURL": "https://raw.githubusercontent.com/maplebrowney/skypulse-us/main/ios-wrapper/SkyPulseUS/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png",
+      "tintColor": "#0284C7",
+      "category": "navigation",
+      "version": "1.0.0",
+      "versionDate": "2026-11-15T20:36:41.141Z",
+      "versionDescription": "Unsigned SideStore & LiveContainer release with bundled web app.",
+      "downloadURL": "https://github.com/maplebrowney/skypulse-us/releases/download/v1.0.0/SkyPulseUS-SideStore-LiveContainer.ipa",
+      "size": 4850000,
+      "minOSVersion": "16.0",
+      "versions": [
+        {
+          "version": "1.0.0",
+          "date": "2026-11-15T20:36:41.141Z",
+          "localizedDescription": "Automated GitHub Actions unsigned SideStore/LiveContainer IPA.",
+          "downloadURL": "https://github.com/maplebrowney/skypulse-us/releases/download/v1.0.0/SkyPulseUS-SideStore-LiveContainer.ipa",
+          "size": 4850000,
+          "minOSVersion": "16.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSLocationWhenInUseUsageDescription": "SkyPulse US uses your location to center the US airspace map on nearby airports."
+        }
+      }
+    }
+  ]
+}

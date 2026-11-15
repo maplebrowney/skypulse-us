@@ -1,0 +1,6 @@
+{
+  "name": "SkyPulse US",
+  "description": "Live US flight tracker with real-time ADS-B airspace map, airline SVG insignias, terminal & gate schedules, dark/light themes, and automated SideStore/LiveContainer .ipa builder.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

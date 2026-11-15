@@ -1,0 +1,221 @@
+name: Build SideStore / LiveContainer iOS IPA
+
+on:
+  push:
+    branches:
+      - "main"
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      signing_mode:
+        description: "IPA packaging & signing mode"
+        required: true
+        default: "sidestore-unsigned"
+        type: choice
+        options:
+          - sidestore-unsigned
+          - apple-cert-p12
+      version_tag:
+        description: "Release version tag (defaults to 1.0.0)"
+        required: false
+        default: "1.0.0"
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-web-bundle:
+    name: Build SkyPulse US Web Bundle
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Install dependencies & build Vite dist
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+          npm run build
+
+      - name: Upload web dist artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: skypulse-web-dist
+          path: dist/
+
+  build-ios-ipa:
+    name: Build Unsigned SideStore / LiveContainer .ipa
+    needs: build-web-bundle
+    runs-on: macos-15
+    env:
+      PRODUCT_NAME: "SkyPulseUS"
+      BUNDLE_ID: "com.skypulse.us"
+      APP_VERSION: "${{ github.event.inputs.version_tag || '1.0.0' }}"
+      SIGNING_MODE: "${{ github.event.inputs.signing_mode || 'sidestore-unsigned' }}"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download built web bundle into ios-wrapper
+        uses: actions/download-artifact@v4
+        with:
+          name: skypulse-web-dist
+          path: ios-wrapper/${{ env.PRODUCT_NAME }}/WebBundle
+
+      - name: Select latest Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Install XcodeGen & prepare AppIcon
+        run: |
+          brew install xcodegen
+          ICON_SRC=$(ls src/assets/images/skypulse_app_icon_*.jpg 2>/dev/null | head -n 1 || true)
+          if [ -n "$ICON_SRC" ]; then
+            sips -s format png -z 1024 1024 "$ICON_SRC" --out "ios-wrapper/${PRODUCT_NAME}/Assets.xcassets/AppIcon.appiconset/AppIcon-1024.png"
+          fi
+
+      - name: Generate Xcode project
+        working-directory: ios-wrapper
+        run: |
+          xcodegen generate
+          chmod +x scripts/package-sidestore-ipa.sh
+
+      - name: Import Apple Signing Certificate (optional .p12 mode)
+        if: ${{ env.SIGNING_MODE == 'apple-cert-p12' && secrets.APPLE_P12_BASE64 != '' }}
+        env:
+          APPLE_P12_BASE64: ${{ secrets.APPLE_P12_BASE64 }}
+          APPLE_P12_PASSWORD: ${{ secrets.APPLE_P12_PASSWORD }}
+          APPLE_PROVISION_BASE64: ${{ secrets.APPLE_PROVISION_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          P12_PATH=$RUNNER_TEMP/certificate.p12
+          PP_PATH=$RUNNER_TEMP/profile.mobileprovision
+
+          echo "$APPLE_P12_BASE64" | base64 --decode > "$P12_PATH"
+          echo "$APPLE_PROVISION_BASE64" | base64 --decode > "$PP_PATH"
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security import "$P12_PATH" -P "$APPLE_P12_PASSWORD" -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+          security list-keychain -d user -s "$KEYCHAIN_PATH"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+          mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
+          UUID=$(/usr/libexec/PlistBuddy -c 'Print :UUID' /dev/stdin <<< $(security cms -D -i "$PP_PATH"))
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/"$UUID.mobileprovision"
+
+      - name: Archive Signed IPA (when .p12 secrets present)
+        if: ${{ env.SIGNING_MODE == 'apple-cert-p12' && secrets.APPLE_P12_BASE64 != '' }}
+        working-directory: ios-wrapper
+        run: |
+          xcodebuild archive \
+            -project "${PRODUCT_NAME}.xcodeproj" \
+            -scheme "${PRODUCT_NAME}" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "build/${PRODUCT_NAME}.xcarchive" \
+            MARKETING_VERSION="${APP_VERSION}"
+
+          xcodebuild -exportArchive \
+            -archivePath "build/${PRODUCT_NAME}.xcarchive" \
+            -exportOptionsPlist "ExportOptions.plist" \
+            -exportPath "build/ipa-export"
+
+          mv build/ipa-export/*.ipa "build/${PRODUCT_NAME}-SideStore-LiveContainer.ipa"
+
+      - name: Archive Unsigned IPA for SideStore & LiveContainer
+        if: ${{ env.SIGNING_MODE != 'apple-cert-p12' || secrets.APPLE_P12_BASE64 == '' }}
+        working-directory: ios-wrapper
+        run: |
+          xcodebuild archive \
+            -project "${PRODUCT_NAME}.xcodeproj" \
+            -scheme "${PRODUCT_NAME}" \
+            -configuration Release \
+            -destination "generic/platform=iOS" \
+            -archivePath "build/${PRODUCT_NAME}.xcarchive" \
+            CODE_SIGN_IDENTITY="" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            AD_HOC_CODE_SIGNING_ALLOWED=YES \
+            MARKETING_VERSION="${APP_VERSION}"
+
+          ./scripts/package-sidestore-ipa.sh
+
+      - name: Compute IPA metadata & update sidestore-source.json
+        id: ipa_meta
+        run: |
+          IPA_FILE="ios-wrapper/build/${PRODUCT_NAME}-SideStore-LiveContainer.ipa"
+          SHA256=$(shasum -a 256 "$IPA_FILE" | awk '{print $1}')
+          SIZE_BYTES=$(wc -c < "$IPA_FILE" | tr -d ' ')
+          RELEASE_TAG="v${APP_VERSION}"
+          DOWNLOAD_URL="https://github.com/${{ github.repository }}/releases/download/${RELEASE_TAG}/${PRODUCT_NAME}-SideStore-LiveContainer.ipa"
+
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+          echo "size=$SIZE_BYTES" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$RELEASE_TAG" >> "$GITHUB_OUTPUT"
+          echo "ipa_file=$IPA_FILE" >> "$GITHUB_OUTPUT"
+
+          python3 - <<PYEOF
+          import json, datetime
+          path = "sidestore-source.json"
+          with open(path, "r") as f:
+              data = json.load(f)
+          today = datetime.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+          app = data["apps"][0]
+          app["version"] = "${APP_VERSION}"
+          app["versionDate"] = today
+          app["downloadURL"] = "$DOWNLOAD_URL"
+          app["size"] = int("$SIZE_BYTES")
+          app["sha256"] = "$SHA256"
+          app["versions"] = [{
+              "version": "${APP_VERSION}",
+              "date": today,
+              "localizedDescription": "Unsigned SideStore & LiveContainer IPA built from main.",
+              "downloadURL": "$DOWNLOAD_URL",
+              "size": int("$SIZE_BYTES"),
+              "sha256": "$SHA256",
+              "minOSVersion": "16.0"
+          }]
+          with open(path, "w") as f:
+              json.dump(data, f, indent=2)
+              f.write("\n")
+          PYEOF
+
+      - name: Upload SideStore / LiveContainer .ipa artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.PRODUCT_NAME }}-SideStore-LiveContainer-IPA
+          path: ${{ steps.ipa_meta.outputs.ipa_file }}
+
+      - name: Publish GitHub Release with .ipa
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ipa_meta.outputs.release_tag }}
+          name: "SkyPulse US v${{ env.APP_VERSION }} (SideStore / LiveContainer IPA)"
+          body: |
+            Automated iOS build for **SkyPulse US** (`com.skypulse.us`).
+
+            - **Compatible with**: SideStore (on-device Anisette re-sign) & LiveContainer (unsigned guest app)
+            - **SideStore Source URL**: `https://raw.githubusercontent.com/${{ github.repository }}/main/sidestore-source.json`
+            - **SHA-256**: `${{ steps.ipa_meta.outputs.sha256 }}`
+            - **Size**: `${{ steps.ipa_meta.outputs.size }}` bytes
+          files: ${{ steps.ipa_meta.outputs.ipa_file }}
+
+      - name: Commit updated sidestore-source.json
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add sidestore-source.json
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(sidestore): update manifest for v${APP_VERSION} [skip ci]"
+            git push origin HEAD:main
+          fi

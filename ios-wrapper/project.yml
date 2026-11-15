@@ -1,0 +1,43 @@
+name: SkyPulseUS
+options:
+  bundleIdPrefix: com.skypulse
+  deploymentTarget:
+    iOS: "16.0"
+  xcodeVersion: "16.0"
+  createIntermediateGroups: true
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"
+    CURRENT_PROJECT_VERSION: "1"
+    SWIFT_VERSION: "5.0"
+    TARGETED_DEVICE_FAMILY: "1,2"
+    ENABLE_BITCODE: NO
+    ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+    SUPPORTS_MACCATALYST: NO
+    DEAD_CODE_STRIPPING: YES
+
+targets:
+  SkyPulseUS:
+    type: application
+    platform: iOS
+    deploymentTarget: "16.0"
+    sources:
+      - path: SkyPulseUS
+        excludes:
+          - "**/*.plist"
+          - "**/*.entitlements"
+    resources:
+      - path: SkyPulseUS/Assets.xcassets
+      - path: SkyPulseUS/WebBundle
+        type: folder
+    info:
+      path: SkyPulseUS/Info.plist
+    entitlements:
+      path: SkyPulseUS/SkyPulseUS.entitlements
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.skypulse.us
+        PRODUCT_NAME: SkyPulseUS
+        INFOPLIST_KEY_CFBundleDisplayName: "SkyPulse US"
+        CODE_SIGN_STYLE: Automatic
